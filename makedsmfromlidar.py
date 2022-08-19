@@ -7,7 +7,7 @@ This script is based on Swedish national lidar point cloud
 
 # Initialisation
 from osgeo import gdal
-from qgis.core import QgsApplication, QgsVectorLayer
+from qgis.core import QgsApplication, QgsVectorLayer, QgsCoordinateReferenceSystem
 import numpy as np
 from osgeo.gdalconst import GDT_Float32, GA_ReadOnly
 import sys, os
@@ -59,19 +59,16 @@ Processing.initialize()
 # from processing.core.ProcessingConfig import ProcessingConfig, Setting
 
 # Input data paths and settings
-# workingpath = 'C:/Users/xlinfr/Documents/Undervisning/GIS/LidarQGISFUSION/tempfromscript/'
-# domain = r'C:\Users\xlinfr\Documents\Undervisning\GIS\LidarQGISFUSION\FastighetskartanVektor_1501_3006\rutnat_get.shp'
-# # buildingFootprint = r'C:\Users\xlinfr\Documents\Undervisning\GIS\LidarQGISFUSION\FastighetskartanVektor_1501_3006\by_get.shp'
-# buildingFootprint = 'C:/temp/by_get.shp'
-# lidardata = r'C:\Users\xlinfr\Documents\Undervisning\GIS\LidarQGISFUSION\Laserdata_1501_3006\09B002_63975_3175_25\09B002_63975_3175_25.las'
-workingpath = 'D:/LidarQGISFUSION/tempfromscript/'
-domain = r'D:\LidarQGISFUSION\FastighetskartanVektor_1501_3006\rutnat_get.shp'
+workingpath = 'C:/Users/xlinfr/Documents/Undervisning/GIS/LidarQGISFUSION/tempfromscript/'
+domain = r'C:\Users\xlinfr\Documents\Undervisning\GIS\LidarQGISFUSION\FastighetskartanVektor_1501_3006\rutnat_get.shp'
 # buildingFootprint = r'C:\Users\xlinfr\Documents\Undervisning\GIS\LidarQGISFUSION\FastighetskartanVektor_1501_3006\by_get.shp'
 buildingFootprint = 'C:/temp/by_get.shp'
-lidardata = r'D:\LidarQGISFUSION\Laserdata_1501_3006\09B002_63975_3175_25\09B002_63975_3175_25.las'
-EPSG = 3006
-intensitylimit = 125 # to identify grass surfaces from Lidar
-cellsize = 2
+lidardata = r'C:\Users\xlinfr\Documents\Undervisning\GIS\LidarQGISFUSION\Laserdata_1501_3006\09B002_63975_3175_25\09B002_63975_3175_25.las'
+
+intensitylimit = 175 # Threshold to identify grass surfaces from Lidar
+cellsize = 2         # Cellsize for output raster
+buildingbuffer = cellsize * 1.5 # Buffersize from building footprints
+zfilter = 2.5        # Height above ground to filter out low vegetation
 
 outputs = {}
 
@@ -81,7 +78,7 @@ os.mkdir(workingpath)
 
 vlayer = QgsVectorLayer(domain, "polygon", "ogr")
 extent = vlayer.extent()
-projwin = str(extent.xMinimum()) + ',' + str(extent.xMaximum()) + ',' + str(extent.yMinimum()) +',' + str(extent.yMaximum()) + ' [EPSG:' + str(EPSG) + ']'
+projwin = str(extent.xMinimum()) + ',' + str(extent.xMaximum()) + ',' + str(extent.yMinimum()) +',' + str(extent.yMaximum()) + ' [EPSG:3006]'
 
 print('Clipping LAS-file')
 alg_params = {
@@ -101,7 +98,7 @@ outputs['ClipLidardata'] = processing.run("fusion:clipdata", alg_params)
 print('Gereate ground elevation model')
 alg_params = {
     'INPUT': outputs['ClipLidardata']['OUTPUT'], 
-    'CELLSIZE':2,
+    'CELLSIZE':cellsize,
     'XYUNITS':0,
     'ZUNITS':0,
     'VERSION64':True,
@@ -113,6 +110,7 @@ alg_params = {
     'CLASS':'2',
     'SLOPE':'',
     'ADVANCED_MODIFIERS':''}
+    
 processing.run("fusion:gridsurfacecreate", alg_params)
 
 #TODO polyclipdata dose not work as processing alg. Running with os.system() here instead. Seems to be issues with /\ and long search paths
@@ -131,7 +129,7 @@ os.system(alg_params)
 print('Make DSM from ground and building points')
 alg_params = {
      'INPUT': workingpath + 'building.las;' + workingpath + 'ground.las',
-     'CELLSIZE':2,
+     'CELLSIZE':cellsize,
      'XYUNITS':0,
      'ZUNITS':0,
      'VERSION64':True,
@@ -163,7 +161,7 @@ alg_params = {
     'IGNOREOVERLAP':False,
     'CLASS':'',
     'ADVANCED_MODIFIERS':
-    '/zmin:2.5'
+    '/zmin:' + str(zfilter) 
 }
 outputs['FilteredVeg2point5meters'] = processing.run("fusion:clipdata", alg_params)
 
@@ -171,7 +169,7 @@ outputs['FilteredVeg2point5meters'] = processing.run("fusion:clipdata", alg_para
 print('Make CDSM of filtered vegetation points')
 alg_params = {
      'INPUT':workingpath + 'veg_filt.las;' + workingpath + 'ground.las',
-     'CELLSIZE':2,
+     'CELLSIZE':cellsize,
      'XYUNITS':0,
      'ZUNITS':0,
      'VERSION64':True,
@@ -194,7 +192,7 @@ outputs['CDSMDTMtoASCII'] = processing.run("fusion:dtm2ascii", alg_params)
 print('Buffering building footprints')
 alg_params = {
     'INPUT': buildingFootprint,
-    'DISTANCE':2.5,
+    'DISTANCE': buildingbuffer,
     'SEGMENTS':1,
     'END_CAP_STYLE':1,
     'JOIN_STYLE':1,
@@ -212,7 +210,7 @@ maxy = geoTransform[3]
 maxx = minx + geoTransform[1] * data.RasterXSize
 miny = maxy + geoTransform[5] * data.RasterYSize
 data = None
-projwinrasterize = str(minx) + ',' + str(maxx) + ',' + str(miny) +',' + str(maxy) + ' [EPSG:' + str(EPSG) + ']'
+projwinrasterize = str(minx) + ',' + str(maxx) + ',' + str(miny) +',' + str(maxy) + ' [EPSG:3006]'
 
 alg_params = {
     'INPUT':outputs['BufferedBuildingsTif']['OUTPUT'],
@@ -220,8 +218,8 @@ alg_params = {
     'BURN':0,
     'USE_Z':False,
     'UNITS':1,
-    'WIDTH':2,
-    'HEIGHT':2,
+    'WIDTH':cellsize,
+    'HEIGHT':cellsize,
     'EXTENT':projwinrasterize,
     'NODATA':None,
     'OPTIONS':'',
@@ -309,8 +307,8 @@ alg_params = {
     'BURN':0,
     'USE_Z':False,
     'UNITS':1,
-    'WIDTH':2,
-    'HEIGHT':2,
+    'WIDTH':cellsize,
+    'HEIGHT':cellsize,
     'EXTENT':projwinrasterize,
     'NODATA':None,
     'OPTIONS':'',
@@ -339,7 +337,7 @@ alg_params = {
     'ALLRET':False,
     'LOWEST':False,
     'HIST':False,
-    'PIXEL':2,
+    'PIXEL':cellsize,
     'SWITCH':1, # bug in FUSION. Bitmap is jpg
     'OUTPUT': workingpath + 'intensity',
     'ADVANCED_MODIFIERS':''
@@ -347,7 +345,7 @@ alg_params = {
 outputs['IntensityRaster'] = processing.run("fusion:intensityimage", alg_params)
 
 alg_params = {
-    'INPUT_A':workingpath + 'intensity.bmp',
+    'INPUT_A':workingpath + 'intensity.jpg',
     'BAND_A':1,
     'INPUT_B':None,
     'BAND_B':None,
@@ -472,8 +470,20 @@ alg_params = {
     'INPUT':outputs['LAINodata']['OUTPUT'],
     'BAND':1,
     'FILL_VALUE':0,
-    'OUTPUT':'C:/Users/xlinfr/Documents/Undervisning/GIS/LidarQGISFUSION/tempfromscript/lai_10m.tif'
+    'OUTPUT': workingpath + 'lai_10m.tif'
 }
 outputs['LAI'] = processing.run("native:fillnodata", alg_params)
+
+# Assign CRS to LAI-Rasters
+alg_params = {
+    'INPUT': outputs['LAI']['OUTPUT'],
+    'CRS':QgsCoordinateReferenceSystem('EPSG:3006')}
+
+processing.run("gdal:assignprojection", alg_params)
+
+alg_params = {
+    'INPUT': outputs['LAINodata']['OUTPUT'],
+    'CRS':QgsCoordinateReferenceSystem('EPSG:3006')}
+processing.run("gdal:assignprojection", alg_params)
 
 test = 4
