@@ -20,8 +20,11 @@ import numpy as np
 from osgeo.gdalconst import GDT_Float32, GA_ReadOnly
 import sys, os
 import shutil
-import matplotlib.pylab as plt
+# import matplotlib.pylab as plt
+import time
 # from pathlib import Path
+
+start = time.time()
 
 ### Input data paths and settings ###
 windowsuser = 'xlinfr'
@@ -29,7 +32,15 @@ workingpath = 'D:/LidarQGISFUSION/tempfromscript/'
 domain = 'D:/LidarQGISFUSION/FastighetskartanVektor_1501_3006/rutnat_get.shp'
 buildingFootprint = 'D:/LidarQGISFUSION/FastighetskartanVektor_1501_3006/by_get.shp'
 lidardata = 'D:/LidarQGISFUSION/Laserdata_1501_3006/09B002_63975_3175_25/09B002_63975_3175_25.las'
-#TODO outputfolder = 'D:/temp/' #not used yet
+outputfolder = 'D:/temp/'
+
+#test
+#TODO: bara_bygg is not tested proparly. Didnt fint a good testing area
+# domain = 'D:/LidarQGISFUSION/Probs/bara_bygg.shp' #inga_byggnader.shp' #ingen_highveg.shp'
+# buildingFootprint = 'D:/LidarQGISFUSION/Probs/byggnader.shp'
+# lidardata = 'D:/LidarQGISFUSION/Probs/09B002_639_32_2500.las'
+
+
 
 EPSGnum = 3006          # Target CRS. Make sure all data is in same CRS
 intensitylimit = 175    # to identify grass surfaces from Lidar
@@ -209,7 +220,7 @@ else:
     alg_params = {
         'INPUT':outputs['ClipLidardata']['OUTPUT'],
         'OUTPUT': workingpath + 'ground.las',
-        'ADVANCED_MODIFIERS':'/class:1'}
+        'ADVANCED_MODIFIERS':'/class:2'}
     processing.run("fusion:mergelasfiles", alg_params)
 
 if os.path.exists(workingpath + 'building.las'):
@@ -231,13 +242,12 @@ if os.path.exists(workingpath + 'building.las'):
     outputs['DSMDTMtoASCII'] = dtm2ascii(outputs['DSMCanopyModel']['OUTPUT'], workingpath + 'dsm.asc')
 
 else :
-    # TODO This will create problems for many things, as the Lasfile is clipped with Polyclipdata which requires a shp file with building polygons
     print('No Buildings found in the LiDAR Pointcloud')
     building_exist = 0
     # create empty dsm
     data2 = gdal.Open(workingpath + 'dem.tif', GA_ReadOnly)
-    dem = data2.ReadAsArray().astype(float)
-    saveraster(data2, workingpath + 'dsm.tif', dem)
+    dsm = data2.ReadAsArray().astype(float)
+    saveraster(data2, workingpath + 'dsm.tif', dsm)
     
     outputs['DSMDTMtoASCII'] = {}
     outputs['DSMDTMtoASCII']['OUTPUT'] = workingpath + 'dem.tif' #issue #1
@@ -253,13 +263,28 @@ data = None
 projwinrasterize = str(minx) + ',' + str(maxx) + ',' + str(miny) +',' + str(maxy) + ' [EPSG:' + str(3006) + ']'
 
 print('Clipping out vegetation points')
-alg_params = 'C:/FUSION/PolyClipData64.exe /outside /class:1 "'  + buildingFootprint + '" "' + workingpath + 'veg.las" "' + outputs['ClipLidardata']['OUTPUT'] + '"'
-os.system(alg_params)
+if building_exist == 1:
+    alg_params = 'C:/FUSION/PolyClipData64.exe /outside /class:1 "'  + buildingFootprint + '" "' + workingpath + 'veg.las" "' + outputs['ClipLidardata']['OUTPUT'] + '"'
+    os.system(alg_params)
+else:
+    alg_params = {
+        'INPUT':outputs['ClipLidardata']['OUTPUT'],
+        'OUTPUT': workingpath + 'veg.las',
+        'ADVANCED_MODIFIERS':'/class:1'}
+    processing.run("fusion:mergelasfiles", alg_params)
 
-#TODO if no High vegeation is present in LidarPointcloud, no CDSM will be created wich will create problems further down when making landcover.tif
-if os.path.exists(workingpath + 'veg.las'):
+#check if veg.las includes any points
+alg_params = {
+    'INPUT':workingpath + 'veg.las','OUTPUT':workingpath + 'check_veg.csv','DENSITY':'','FIRSTDENSITY':'','INTENSITY':'','ADVANCED_MODIFIERS':''}
+processing.run("fusion:catalog", alg_params)
+a = np.genfromtxt(workingpath + 'check_veg.csv', skip_header=1, delimiter=',',missing_values='**********', filling_values=-9999)
+if a[9] == 0:
+    veg_exist = 0
+else: 
     veg_exist = 1
 
+#TODO if no High vegeation is present in LidarPointcloud, no CDSM will be created wich will create problems further down when making landcover.tif
+if veg_exist == 1:
     print('Make CDSM of filtered vegetation points')
     alg_params = {
     'INPUT':workingpath + 'veg.las;' + workingpath + 'ground.las',
@@ -276,91 +301,103 @@ if os.path.exists(workingpath + 'veg.las'):
 
     outputs['CDSMDTMtoASCII'] = dtm2ascii(outputs['CDSMCanopyModel']['OUTPUT'], workingpath + 'cdsmraw.asc')
 
+    # csdm ascii to tif
+    data3 = gdal.Open(workingpath + 'cdsmraw.asc', GA_ReadOnly)
+    cdsmtemp = data3.ReadAsArray().astype(float)
+    nd = data3.GetRasterBand(1).GetNoDataValue() # one line of nodata to the left is removed
+    cdsmtemp[cdsmtemp==nd] = 0
+    saveraster(data3, workingpath + 'cdsm.tif', cdsmtemp)
+
 else:
     print('No High vegetation found in the LiDAR Pointcloud')
     veg_exist = 0
-    data2 = gdal.Open(workingpath + 'dem.tif', GA_ReadOnly)
-    dem = data2.ReadAsArray().astype(float)
-    dem = dem * 0.0
-    saveraster(data2, workingpath + 'cdsm.tif', dem)
+    data3 = gdal.Open(workingpath + 'dem.asc', GA_ReadOnly)
+    demo = data3.ReadAsArray().astype(float)
+    cdsm = np.copy(demo) * 0.0
+    saveraster(data3, workingpath + 'cdsm.tif', cdsm)
+    outputs['CDSMDTMtoASCII'] = {}
     outputs['CDSMDTMtoASCII']['OUTPUT'] = workingpath + 'cdsm.tif' #issue #2
 
-print('Buffering building footprints')
-alg_params = {
-    'INPUT': buildingFootprint,
-    'DISTANCE': buildingbuffer,
-    'SEGMENTS':1,
-    'END_CAP_STYLE':1,
-    'JOIN_STYLE':1,
-    'MITER_LIMIT':2,
-    'DISSOLVE':True,
-    'OUTPUT': workingpath + 'by_buff.shp'}
+if building_exist == 1:
+    print('Buffering building footprints')
+    alg_params = {
+        'INPUT': buildingFootprint,
+        'DISTANCE': buildingbuffer,
+        'SEGMENTS':1,
+        'END_CAP_STYLE':1,
+        'JOIN_STYLE':1,
+        'MITER_LIMIT':2,
+        'DISSOLVE':True,
+        'OUTPUT': workingpath + 'by_buff.shp'}
 
-outputs['BufferedBuildingsTif'] = processing.run("native:buffer", alg_params)
+    outputs['BufferedBuildingsTif'] = processing.run("native:buffer", alg_params)
 
-outputs['BufferedBuildings'] = gdal_rasterize(outputs['BufferedBuildingsTif']['OUTPUT'],workingpath + 'buff_bolean.tif')
+    outputs['BufferedBuildings'] = gdal_rasterize(outputs['BufferedBuildingsTif']['OUTPUT'],workingpath + 'buff_bolean.tif')
 
-outputs['RemoveBufferedBuildings'] = rastercalculator(workingpath + 'cdsm_filt.tif','A * B', outputs['CDSMDTMtoASCII']['OUTPUT'],outputs['BufferedBuildings']['OUTPUT'])
+    outputs['RemoveBufferedBuildings'] = rastercalculator(workingpath + 'cdsm_filt.tif','A * B', outputs['CDSMDTMtoASCII']['OUTPUT'],outputs['BufferedBuildings']['OUTPUT'])
+else:
+    outputs['RemoveBufferedBuildings'] = {}
+    outputs['RemoveBufferedBuildings']['OUTPUT'] = workingpath + 'cdsm.tif'
 
-print('Removing vegpoints lower than 2.5 meter above ground')
-alg_params = {
-    'INPUT_A':outputs['RemoveBufferedBuildings']['OUTPUT'],
-    'BAND_A':1,
-    'INPUT_B':None,
-    'BAND_B':None,
-    'INPUT_C':None,'BAND_C':None,'INPUT_D':None,'BAND_D':None,'INPUT_E':None,'BAND_E':None,'INPUT_F':None,'BAND_F':None,
-    'FORMULA':'(A > ' + str(zfilter) + ') * A',
-    'NO_DATA':None,'PROJWIN':projwinrasterize,'RTYPE':5,'OPTIONS':'','EXTRA':'',
-    'OUTPUT':workingpath + 'cdsm_2point5meter.tif'
-}
-outputs['RemovedLOWHEIGHTSCDSM'] = processing.run("gdal:rastercalculator", alg_params)
+if veg_exist == 1:
+    print('Removing vegpoints lower than 2.5 meter above ground')
+    alg_params = {
+        'INPUT_A':outputs['RemoveBufferedBuildings']['OUTPUT'],
+        'BAND_A':1,
+        'INPUT_B':None,
+        'BAND_B':None,
+        'INPUT_C':None,'BAND_C':None,'INPUT_D':None,'BAND_D':None,'INPUT_E':None,'BAND_E':None,'INPUT_F':None,'BAND_F':None,
+        'FORMULA':'(A > ' + str(zfilter) + ') * A',
+        'NO_DATA':None,'PROJWIN':projwinrasterize,'RTYPE':5,'OPTIONS':'','EXTRA':'',
+        'OUTPUT':workingpath + 'cdsm_2point5meter.tif'
+    }
+    outputs['RemovedLOWHEIGHTSCDSM'] = processing.run("gdal:rastercalculator", alg_params)
 
-print('vegetation filtering/refinements')
-# filters to be included (remove holes and fill holes (and maybe linear also))
-data = gdal.Open(outputs['RemovedLOWHEIGHTSCDSM']['OUTPUT'], GA_ReadOnly)
-x = data.ReadAsArray().astype(float)
-nd = data.GetRasterBand(1).GetNoDataValue() # one line of nodata to the left is removed
-x[x==nd] = 0
-col = x.shape[1]
-row = x.shape[0]
+    print('vegetation filtering/refinements')
+    # filters to be included (remove holes and fill holes (and maybe linear also))
+    data = gdal.Open(outputs['RemovedLOWHEIGHTSCDSM']['OUTPUT'], GA_ReadOnly)
+    x = data.ReadAsArray().astype(float)
+    nd = data.GetRasterBand(1).GetNoDataValue() # one line of nodata to the left is removed
+    x[x==nd] = 0
+    col = x.shape[1]
+    row = x.shape[0]
 
-# fill holes in vegetation
-y=np.copy(x)
-z=np.copy(x)
-z[z>0]=1
-for i in np.arange(1, row-1):
-    for j in np.arange(1, col-1):
-        dom = z[i-1:i+2, j-1:j+2]
-        if (z[i, j] == 0) and (np.sum(dom) >= 6):
-            y[i, j] = np.median(x[i-1:i+2, j-1:j+2]) 
-        
-# Remove small vegetation units 1
-sur = 2 # number of surrounding vegetation pixels
-for i in np.arange(1, row-1):
-    for j in np.arange(1, col-1):
-        dom = z[i-1:i+2, j-1:j+2]
-        if (z[i, j] == 1) and (np.sum(dom) <= sur):
-            y[i, j] = 0 
+    # fill holes in vegetation
+    y=np.copy(x)
+    z=np.copy(x)
+    z[z>0]=1
+    for i in np.arange(1, row-1):
+        for j in np.arange(1, col-1):
+            dom = z[i-1:i+2, j-1:j+2]
+            if (z[i, j] == 0) and (np.sum(dom) >= 6):
+                y[i, j] = np.median(x[i-1:i+2, j-1:j+2]) 
+            
+    # Remove small vegetation units 1
+    sur = 2 # number of surrounding vegetation pixels
+    for i in np.arange(1, row-1):
+        for j in np.arange(1, col-1):
+            dom = z[i-1:i+2, j-1:j+2]
+            if (z[i, j] == 1) and (np.sum(dom) <= sur):
+                y[i, j] = 0 
 
-# Remove small vegetation units 2
-z=np.copy(y)
-y2=np.copy(y)
-z[z>0]=1
-for i in np.arange(1, row-1):
-    for j in np.arange(1, col-1):
-        dom = z[i-1:i+2, j-1:j+2]
-        if (z[i, j] == 1) and (np.sum(dom) <= 1):
-            y2[i, j] = 0 
+    # Remove small vegetation units 2
+    z=np.copy(y)
+    y2=np.copy(y)
+    z[z>0]=1
+    for i in np.arange(1, row-1):
+        for j in np.arange(1, col-1):
+            dom = z[i-1:i+2, j-1:j+2]
+            if (z[i, j] == 1) and (np.sum(dom) <= 1):
+                y2[i, j] = 0 
 
-saveraster(data,workingpath + 'cdsm_temp.tif', y2)
+    saveraster(data,workingpath + 'cdsm_temp.tif', y2)
 
-# Clip CDSM to fit with DSM
-bigraster = gdal.Open(workingpath + 'cdsm_temp.tif')
-bbox = (minx, maxy, maxx, miny) 
-gdal.Translate(workingpath + 'cdsm.tif', bigraster, projWin=bbox) # Clip raster
+    # Clip CDSM to fit with DSM
+    bigraster = gdal.Open(workingpath + 'cdsm_temp.tif')
+    bbox = (minx, maxy, maxx, miny) 
+    gdal.Translate(workingpath + 'cdsm.tif', bigraster, projWin=bbox) # Clip raster
 
 # remove nodataline from dsm
-# print(outputs['DSMDTMtoASCII']['OUTPUT'])
 data2 = gdal.Open(outputs['DSMDTMtoASCII']['OUTPUT'], GA_ReadOnly)
 dsm = data2.ReadAsArray().astype(float)
 nd = data2.GetRasterBand(1).GetNoDataValue() # one line of nodata to the left is removed
@@ -369,10 +406,9 @@ saveraster(data2, workingpath + 'dsm.tif', dsm)
 
 # land cover
 print('Making landcover from lidar')
-
 outputs['BuildingsBoolean'] = gdal_rasterize(buildingFootprint, workingpath + 'build_bolean.tif')
 
-try:
+if veg_exist == 1:
     # If there is no high vegetation, this will not work. Therefore try: statement
     alg_params = {
         'INPUT_A': workingpath + 'cdsm.tif',
@@ -386,8 +422,8 @@ try:
     }
     outputs['vegBoolean'] = processing.run("gdal:rastercalculator", alg_params)
 
-except:
-    # if no veg.las
+else:
+    outputs['vegBoolean'] = {}
     outputs['vegBoolean']['OUTPUT'] = workingpath + 'cdsm.tif' 
 
 alg_params = {
@@ -510,74 +546,95 @@ try:
 except:
     print('no water found in domain')
 
+
+
+print('LAI estimation from Lidar')
+if veg_exist == 1:
+    if building_exist == 1:
+        print('Clipping out vegetation points with buffered buildings')
+        alg_params = 'C:/FUSION/PolyClipData64.exe /outside /class:1 "'  + outputs['BufferedBuildingsTif']['OUTPUT'] + '" "' + workingpath + 'vegbuff.las" "' + outputs['ClipLidardata']['OUTPUT'] + '"'
+        os.system(alg_params)
+
+        alg_params = {
+            'INPUT':workingpath + 'vegbuff.las;' + workingpath + 'ground.las',
+            'OUTPUT':workingpath + 'lai.las',
+            'ADVANCED_MODIFIERS':''
+        }
+        outputs['LAIcloud'] = processing.run("fusion:mergelasfiles", alg_params)
+    else:
+        alg_params = {
+            'INPUT':workingpath + 'veg.las;' + workingpath + 'ground.las',
+            'OUTPUT':workingpath + 'lai.las',
+            'ADVANCED_MODIFIERS':''
+        }
+        outputs['LAIcloud'] = processing.run("fusion:mergelasfiles", alg_params)
+
+    alg_params = {
+        'INPUT':outputs['LAIcloud']['OUTPUT'],
+        'CELLSIZE':10,
+        'VERSION64':True,
+        'OUTPUT':workingpath + 'lai_grounddensity.dtm',
+        'FIRST':False,
+        'ASCII':True,
+        'CLASS':'2'
+    }
+    processing.run("fusion:returndensity", alg_params)
+
+    alg_params = {
+        'INPUT':outputs['LAIcloud']['OUTPUT'],
+        'CELLSIZE':10,
+        'VERSION64':True,
+        'OUTPUT':workingpath + 'lai_density.dtm',
+        'FIRST':False,
+        'ASCII':True,
+        'CLASS':''
+    }
+    processing.run("fusion:returndensity", alg_params)
+
+    print('Calculating LAI from point density [-1.94 * ln(Rground/Rtotal)]')
+    alg_params = {
+        'INPUT_A':workingpath + 'lai_grounddensity.asc',
+        'BAND_A':1,
+        'INPUT_B':workingpath + 'lai_density.asc',
+        'BAND_B':1,
+        'INPUT_C':None,'BAND_C':None,'INPUT_D':None,'BAND_D':None,'INPUT_E':None,'BAND_E':None,'INPUT_F':None,'BAND_F':None,
+        'FORMULA':'log ( A / B ) * -1.94',
+        'NO_DATA':None,'PROJWIN':None,'RTYPE':5,'OPTIONS':'','EXTRA':'',
+        'OUTPUT':workingpath + 'lai_10m_nodata.tif'
+    }
+    outputs['LAINodata'] = processing.run("gdal:rastercalculator", alg_params)
+
+    alg_params = {
+        'INPUT':outputs['LAINodata']['OUTPUT'],
+        'BAND':1,
+        'FILL_VALUE':0,
+        'OUTPUT': workingpath + 'lai_10m.tif'
+    }
+    outputs['LAI'] = processing.run("native:fillnodata", alg_params)
+
+    # Assign CRS to LAI-Rasters
+    alg_params = {
+        'INPUT': outputs['LAI']['OUTPUT'],
+        'CRS':QgsCoordinateReferenceSystem.fromEpsgId(EPSGnum)}
+
+    processing.run("gdal:assignprojection", alg_params)
+    shutil.copyfile(outputs['LAI']['OUTPUT'], outputfolder + 'lai_10m.tif')
+else:
+    print('No vegetation in domain. No LAI created')
+
 # Assign CRS to Rasters
 alg_params = {'INPUT': workingpath + 'dem.tif', 'CRS':QgsCoordinateReferenceSystem.fromEpsgId(EPSGnum)}
 processing.run("gdal:assignprojection", alg_params)
-alg_params = {'INPUT': workingpath + 'dem.tif', 'CRS':QgsCoordinateReferenceSystem.fromEpsgId(EPSGnum)}
+alg_params = {'INPUT': workingpath + 'dsm.tif', 'CRS':QgsCoordinateReferenceSystem.fromEpsgId(EPSGnum)}
 processing.run("gdal:assignprojection", alg_params)
 alg_params = {'INPUT': workingpath + 'cdsm.tif', 'CRS':QgsCoordinateReferenceSystem.fromEpsgId(EPSGnum)}
 processing.run("gdal:assignprojection", alg_params)
 
-print('LAI estimation from Lidar')
-print('Clipping out vegetation points with buffered buildings')
-alg_params = 'C:/FUSION/PolyClipData64.exe /outside /class:1 "'  + outputs['BufferedBuildingsTif']['OUTPUT'] + '" "' + workingpath + 'vegbuff.las" "' + outputs['ClipLidardata']['OUTPUT'] + '"'
-os.system(alg_params)
+shutil.copyfile(workingpath + 'lc.tif', outputfolder + 'lc.tif')
+shutil.copyfile(workingpath + 'dem.tif', outputfolder + 'dem.tif')
+shutil.copyfile(workingpath + 'dsm.tif', outputfolder + 'dsm.tif')
+shutil.copyfile(workingpath + 'cdsm.tif', outputfolder + 'cdsm.tif')
 
-alg_params = {
-    'INPUT':workingpath + 'vegbuff.las;' + workingpath + 'ground.las',
-    'OUTPUT':workingpath + 'lai.las',
-    'ADVANCED_MODIFIERS':''
-}
-outputs['LAIcloud'] = processing.run("fusion:mergelasfiles", alg_params)
-
-alg_params = {
-    'INPUT':outputs['LAIcloud']['OUTPUT'],
-    'CELLSIZE':10,
-    'VERSION64':True,
-    'OUTPUT':workingpath + 'lai_grounddensity.dtm',
-    'FIRST':False,
-    'ASCII':True,
-    'CLASS':'2'
-}
-processing.run("fusion:returndensity", alg_params)
-
-alg_params = {
-    'INPUT':outputs['LAIcloud']['OUTPUT'],
-    'CELLSIZE':10,
-    'VERSION64':True,
-    'OUTPUT':workingpath + 'lai_density.dtm',
-    'FIRST':False,
-    'ASCII':True,
-    'CLASS':''
-}
-processing.run("fusion:returndensity", alg_params)
-
-print('Calculating LAI from point density [-1.94 * ln(Rground/Rtotal)]')
-alg_params = {
-    'INPUT_A':workingpath + 'lai_grounddensity.asc',
-    'BAND_A':1,
-    'INPUT_B':workingpath + 'lai_density.asc',
-    'BAND_B':1,
-    'INPUT_C':None,'BAND_C':None,'INPUT_D':None,'BAND_D':None,'INPUT_E':None,'BAND_E':None,'INPUT_F':None,'BAND_F':None,
-    'FORMULA':'log ( A / B ) * -1.94',
-    'NO_DATA':None,'PROJWIN':None,'RTYPE':5,'OPTIONS':'','EXTRA':'',
-    'OUTPUT':workingpath + 'lai_10m_nodata.tif'
-}
-outputs['LAINodata'] = processing.run("gdal:rastercalculator", alg_params)
-
-alg_params = {
-    'INPUT':outputs['LAINodata']['OUTPUT'],
-    'BAND':1,
-    'FILL_VALUE':0,
-    'OUTPUT': workingpath + 'lai_10m.tif'
-}
-outputs['LAI'] = processing.run("native:fillnodata", alg_params)
-
-# Assign CRS to LAI-Rasters
-alg_params = {
-    'INPUT': outputs['LAI']['OUTPUT'],
-    'CRS':QgsCoordinateReferenceSystem.fromEpsgId(EPSGnum)}
-
-processing.run("gdal:assignprojection", alg_params)
-
-test = 4
+end = time.time()
+total_time = end - start
+print('Script finished in ' + str(total_time) + ' seconds' )
