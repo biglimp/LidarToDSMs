@@ -2,7 +2,11 @@
 '''
 This script generates DSMs from Lidar data inconjunction to a building footprint vector layer.
 It also generates a LAI dataset
-This script is based on Swedish national lidar point cloud but any point cloud could be used if correct classes are specified
+This script is currently based on Swedish national lidar point cloud but any point cloud could be used if correct classes are specified
+This script is set up as a loop to process many tiles of Lidar-data.
+laz and well as las could be used as input.
+The Script is set for Windows but if correct paths is specified, any OS should be possible.
+
 Output:
 dem.tif - Digital elevation model (masl)
 dsm.tif - Digital Surface Model (masl)
@@ -30,43 +34,53 @@ warnings.filterwarnings("ignore")
 # *****************************************************************************
 
 ### Input data paths and settings ###
-windowsuser = 'xbacos'                          # set username
-infolder = 'C:/Users/xbacos/OneDrive - University of Gothenburg/Artikel_2/Enkat/lc/'  # inputfolder for all input data
-outfolder = 'C:/GitHub/LidarToDSMs/'            # outputfolder
-workingpath = outfolder + 'tempout/'            # Path to temp-folder
+windowsuser = 'xlinfr'                          # set username
+infolder = 'D:/TRANSAFE/Uppsala/InData/'        # inputfolder for all input data
+outfolder = 'D:/TRANSAFE/Uppsala/'              # outputfolder
 mergeoutput = outfolder + 'mergeoutput/'        # Outfolder for merged dsm, dem, cdsm & lc
+workingpath = outfolder + 'tempdata/'           # Path to temp-folder DO NOT CHANGE
+lidar_folder = 'LaserData_NH/'                  # Set to '' if lidar files in infolder
+lidarExtension = '.laz'                         # or .las
+maxPoints = 50                                  # maximum number of pulses per square meter to include (if possible)
+NH_lidar = 'yes'                                # yes if Nationell höjddata from Lantmäteriet is used
 
-# Set names for lidarfiles to use as list without .las
-# TODO fix some function to read .lasfiles in folder and make into list instead of manually writing
-lidar_list = ['09B002_639_31_5025','09B002_639_31_5050']
+# Set names for lidarfiles to use as list without .las. Set to None to automatically read file list
+lidar_list = None
+if lidar_list is None:
+    lidar_list = [] 
+    for file in os.listdir(infolder + lidar_folder):
+        if file.endswith(lidarExtension):
+            lidar_list.append(file[:-4])
 
-domain = None                                       # polygon to clip with. if using whole .las file, set this to None
-buildingFootprint = infolder + 'by_143006.shp'      # Buildings polygons 
-waterpolygon = infolder + 'water_poly3006.shp'      # if no water polygon Set to None
-# TODO use lidarpoints classified as water if no water polyogon provided?
-bridges = None #infolder + 'bridges_poly.shp'       # if no bridges polygon set to None
-railway = None #infolder + 'rail.shp'               # if no railway polygon set to None
+domain = None                                    # polygon to clip with. if using whole .las file, set this to None
+buildingFootprint = infolder + 'Fastighetskartan_Bebyggelse/by_03.shp'      # Buildings polygons 
+waterpolygon = infolder + 'vattenUppsala.shp'    # if no water polygon Set to None. Then OSMdata will be used TODO: water.gpdb from osm is not deleted
+bridges = None #infolder + 'bridges_poly.shp'    # if no bridges polygon set to None
+railway = None #infolder + 'rail.shp'            # if no railway polygon set to None
 
-# #TODO: bara_bygg is not tested proparly. Didnt fint a good testing area
-# domain = 'D:/LidarQGISFUSION/Probs/bara_bygg.shp' #inga_byggnader.shp' #ingen_highveg.shp'
-# buildingFootprint = 'D:/LidarQGISFUSION/Probs/byggnader.shp'
-# lidardata = 'D:/LidarQGISFUSION/Probs/09B002_639_32_2500.las'
+#TODO: only build with no high veg is not tested proparly. Didnt fint a good testing area
 
-EPSGnum = 3006          # Target CRS. Make   sure all data is in same CRS
-intensitylimit = 150    # to identify grass surfaces from Lidar
-cellsize = 4            # Cellsize for output raster
-buildingbuffer = 2.5    # Buffersize from building footprints
-zfilter = 2.5           # min height above ground to filter out low vegetation
-zlim = 25               # max height above ground to filer out (items such as bulding cranes and other stuff that may interfere)
-                        # TODO fix a more flexible zlim? Remove extremevalues using fusion catalog?
-                        # TODO fix zlim for buildings 
-# Calculate LAI? yes or no
-calculate_LAI = 'no' 
+EPSGnum = 3006          # Target CRS. Make sure all data is in same CRS
+intensitylimit = 130    # to identify grass surfaces from Lidar. Values above will be classified as grass [0 to 255]
+cellsize = 2            # Cellsize for output raster in meters
+buildingbuffer = 2.2    # Buffersize from building footprints in meters
+zfilter = 2.5           # min height above ground to filter out low vegetation (meter) 
+zlim = 25               # max height above ground to filer out (items such as bulding cranes and other stuff that may interfere) (meter) 
+lowLimit = 0            # low relative limit for DSM (meter) 
+highLimit = 120         # high relative limit for DSM (meter)
+calculate_LAI = 'yes'   # Calculate LAI? yes or no
 
-#TODO include classes in las-file
-building_class = 1
-ground_class = 2
-unclassified = 1
+#TODO include classes from standard las-file. 
+if NH_lidar.lower() == 'yes':
+    building_class = 1
+    ground_class = 2
+    unclassified = 1
+    veg_class = None # not used yet
+else: # standard LAS
+    building_class = 6
+    ground_class = 2
+    unclassified = 1
+    veg_class = [3,4,5] # not used yet    
 
 # Initiating a QGIS application and connect to processing
 qgishome = 'C:/OSGeo4W/apps/qgis/'
@@ -94,7 +108,7 @@ from QuickOSM.quick_osm_processing.provider import Provider
 quickOSM_provider = Provider()
 QgsApplication.processingRegistry().addProvider(quickOSM_provider)
 
-
+# Internal functions
 def saveraster(gdal_data, filename, raster):
     rows = gdal_data.RasterYSize
     cols = gdal_data.RasterXSize
@@ -198,23 +212,41 @@ def overwrite_raster(input_raster, input_vector, value):
         }
     return processing.run("gdal:rasterize_over_fixed_value", alg_params) 
 
-def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):    
+def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path, building_buff_path):    
     print('\n*******************************\nWork with LASfile: ', filename, '\n*******************************')
     
     outputs = {}
     ### Start of process ###
     # TODO errors here with trying to remove building clip shp. Tested with making it temporary output,
     # but it gets error with FUSION as the temporary file is a .gpkg file, and Fusion requires .shp
+    # temporary fix using different file names
+    
     if os.path.exists(workingpath):
         shutil.rmtree(workingpath, ignore_errors= True) # ignore error cleans the folder except for 2 building_clip files.
+        if not os.path.exists(workingpath):
+            os.mkdir(workingpath)
     else:
-        os.mkdir(outfolder + 'tempout')
+        os.mkdir(workingpath)
 
     if os.path.exists(outputfolder):
         shutil.rmtree(outputfolder)
         os.mkdir(outputfolder)
     else:
         os.mkdir(outputfolder)
+
+    # converts laz ot las (if nececcary)
+    if lidarExtension == '.laz':
+        if not os.path.exists(lidardata):
+            alg_params = {
+            'INPUT':lidardata[:-4] + '.laz',
+            'DENSITY':maxPoints,
+            'CELLSIZE':1,
+            'RSEED':None,
+            'CLASS':'',
+            'IGNOREOVERLAP':False,
+            'VERSION64':True,
+            'OUTPUT':lidardata}
+            processing.run("fusion:thindata", alg_params)
 
     if domain == None:
         # Get extent coordinates for .las file (minx, miny, maxx, maxy)
@@ -258,7 +290,7 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
         outputs['BuildingsClip'] = processing.run("gdal:clipvectorbyextent", alg_params)
 
         print('Clipping LAS-file')
-        outputs['ClipLidardata']  = clipdata(lidardata, workingpath + 'clippedLidar.las', projwin,  dtm='', adv_modifier = '/zmax:100')
+        outputs['ClipLidardata']  = clipdata(lidardata, workingpath + 'clippedLidar.las', projwin,  dtm='')
 
     print('Generate ground elevation model (DEM)')
     alg_params = {
@@ -287,13 +319,6 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
     dem[dem==nd] = 0
     saveraster(data2, workingpath + 'dem.tif', dem)
 
-    #TODO polyclipdata dose not work as processing alg. Running with os.system() here instead. Seems to be issues with /\ and long paths. Issue has been raised to FUSION developers.
-    #TODO Seems to work now. Strange... Keeping os.system() processing.run("fusion:polyclipdata", {'INPUT':'D:\\LidarQGISFUSION\\tempfromscript\\clippedLidar.las','MASK':'D:\\LidarQGISFUSION\\FastighetskartanVektor_1501_3006\\by_get.shp','VERSION64':True,'OUTPUT':'D:/LidarQGISFUSION/tempfromscript/test4.las','SHAPE':False,'FIELD':'','VALUE':'','ADVANCED_MODIFIERS':'/class:1'})
-
-    # print('Clipping out building points')
-    # alg_params = 'C:/FUSION/PolyClipData64.exe /class:1 "'  + buildingFootprint + '" "' + workingpath + 'building.las" "' + outputs['ClipLidardata']['OUTPUT'] + '"'
-    # os.system(alg_params)
-
     print('Clipping out building points')
     alg_params  = {
         'INPUT': outputs['ClipLidardata']['OUTPUT'],
@@ -320,9 +345,6 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
 
     outputs['GroundLAS'] = processing.run("fusion:polyclipdata", alg_params)
 
-    # alg_params = 'C:/FUSION/PolyClipData64.exe /outside /class:2 "'  + buildingFootprint + '" "' + workingpath + 'ground.las" "' + outputs['ClipLidardata']['OUTPUT'] + '"'
-    # os.system(alg_params)
-
     if os.path.exists(outputs['GroundLAS']['OUTPUT']):
         pass
     else:
@@ -345,10 +367,9 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
             'VERSION64':True,
             'OUTPUT':workingpath + 'dsm.dtm',
             'GROUND':'','MEDIAN':'','SMOOTH':'','CLASS':'','SLOPE':False,'ASCII':False,
-            'ADVANCED_MODIFIERS':''
+            'ADVANCED_MODIFIERS': '/ground:' + workingpath + 'ground.dtm /outlier:' + str(lowLimit) + ',' + str(highLimit)
         }
         outputs['DSMCanopyModel'] = processing.run("fusion:canopymodel",alg_params)
-        
         outputs['DSMDTMtoASCII'] = dtm2ascii(outputs['DSMCanopyModel']['OUTPUT'], workingpath + 'dsm.asc')
     else :
         print('No Buildings found in the LiDAR Pointcloud')
@@ -372,7 +393,6 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
     projwinrasterize = str(minx) + ',' + str(maxx) + ',' + str(miny) +',' + str(maxy) + ' [EPSG:' + str(EPSGnum) + ']'
 
     print('Clipping out vegetation points')
-
     if building_exist == 1:
         alg_params  = {
             'INPUT': outputs['ClipLidardata']['OUTPUT'],
@@ -409,7 +429,7 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
     else: 
         veg_exist = 1
 
-    #TODO if no High vegeation is present in LidarPointcloud, no CDSM will be created wich will create problems further down when making landcover.tif
+    #TODO if no High vegeation is present in LidarPointcloud, no CDSM will be created wich will create problems further down when making landcover.tif. fixed?
     if veg_exist == 1:
         print('Make CDSM of filtered vegetation points')
         alg_params = {
@@ -454,14 +474,11 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
             'JOIN_STYLE':1,
             'MITER_LIMIT':2,
             'DISSOLVE':True,
-            'OUTPUT': 'TEMPORARY_OUTPUT'}
+            'OUTPUT': building_buff_path}
 
         outputs['BufferedBuildingsTif'] = processing.run("native:buffer", alg_params)
-
         outputs['BufferedBuildings'] = gdal_rasterize(outputs['BufferedBuildingsTif']['OUTPUT'],workingpath + 'buff_bolean.tif', projwinrasterize)
-
         outputs['RemoveBufferedBuildings'] = rastercalculator(workingpath + 'cdsm_filt.tif', projwinrasterize ,'A * B', outputs['CDSMDTMtoASCII']['OUTPUT'],outputs['BufferedBuildings']['OUTPUT'])
-   
     else:
         outputs['RemoveBufferedBuildings'] = {}
         outputs['RemoveBufferedBuildings']['OUTPUT'] = workingpath + 'cdsm.tif'
@@ -527,11 +544,15 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
         bbox = (minx, maxy, maxx, miny) 
         gdal.Translate(workingpath + 'cdsm.tif', bigraster, projWin=bbox) # Clip raster
 
-    # remove nodataline from dsm
+    # remove nodataline from dsm and add ground heights
     data2 = gdal.Open(outputs['DSMDTMtoASCII']['OUTPUT'], GA_ReadOnly)
     dsm = data2.ReadAsArray().astype(float)
     nd = data2.GetRasterBand(1).GetNoDataValue() # one line of nodata to the left is removed
     dsm[dsm==nd] = 0
+    if building_exist == 1:
+        data3 = gdal.Open(workingpath + 'dem.tif', GA_ReadOnly)
+        dem2 = data3.ReadAsArray().astype(float)
+        dsm = dsm + dem2
     saveraster(data2, workingpath + 'dsm.tif', dsm)
 
     # land cover
@@ -548,8 +569,7 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
             'INPUT_C':None,'BAND_C':None,'INPUT_D':None,'BAND_D':None,'INPUT_E':None,'BAND_E':None,'INPUT_F':None,'BAND_F':None,
             'FORMULA':'(A > 0)',
             'NO_DATA':None,'PROJWIN':'','RTYPE':5,'OPTIONS':'','EXTRA':'',
-            'OUTPUT':workingpath + 'veg_bolean.tif'
-        }
+            'OUTPUT':workingpath + 'veg_bolean.tif'}
         outputs['vegBoolean'] = processing.run("gdal:rastercalculator", alg_params)
 
     else:
@@ -564,15 +584,12 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
         'PIXEL':cellsize,
         'SWITCH':1, # bug in FUSION. Bitmap is jpg
         'OUTPUT': workingpath + 'intensity',
-        'ADVANCED_MODIFIERS':''
-    }
+        'ADVANCED_MODIFIERS':''}
+
     outputs['IntensityRaster'] = processing.run("fusion:intensityimage", alg_params)
-
     outputs['Intensity1Raster'] = rastercalculator(workingpath + 'intensity1.tif', projwinrasterize, 'A * 1',workingpath + 'intensity.jpg')
-
+    shutil.copyfile(outputs['Intensity1Raster']['OUTPUT'], outputfolder + 'intensity.tif')
     outputs['Intensity1RasterNodata'] = rastercalculator(workingpath + 'intensity1nodata.tif',projwinrasterize ,'(A < 255) * A', outputs['Intensity1Raster']['OUTPUT'])
-    #((“Intensity1@1” < 255) * “Intensity1@1”)
-
     outputs['Intensity1RasterFinal'] = rastercalculator(workingpath + 'lc_boleantemp.tif', projwinrasterize ,'(A >= ' + str(intensitylimit) + ')', outputs['Intensity1RasterNodata']['OUTPUT'])
 
     # Clip Intensity to fit with CDSM
@@ -591,8 +608,7 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
         'INPUT_D':None,'BAND_D':None,'INPUT_E':None,'BAND_E':None,'INPUT_F':None,'BAND_F':None,
         'FORMULA':'(B * -1 + 1) * C * A',   #("veg_bolean@1" * -1 + 1) * "lc_bolean@1" * "buff_bolean@1"
         'NO_DATA':None,'PROJWIN':None,'RTYPE':5,'OPTIONS':'','EXTRA':'',
-        'OUTPUT': workingpath + 'grass.tif'
-    }
+        'OUTPUT': workingpath + 'grass.tif'}
 
     outputs['GrassRaster'] = processing.run("gdal:rastercalculator", alg_params)
 
@@ -606,8 +622,7 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
         'INPUT_D':None,'BAND_D':None,'INPUT_E':None,'BAND_E':None,'INPUT_F':None,'BAND_F':None,
         'FORMULA':'A + (C * 2) + ((A * B) * 3)',   #(“build_bolean@1”) + (“lc_bolean@1” * 2) + ((“build_bolean@1” * “veg_bolean@1”) * 3)
         'NO_DATA':None,'PROJWIN':None,'RTYPE':5,'OPTIONS':'','EXTRA':'',
-        'OUTPUT': workingpath + 'lcunclassed.tif'
-    }
+        'OUTPUT': workingpath + 'lcunclassed.tif'}
 
     outputs['LandCoverUnclassedRaster'] = processing.run("gdal:rastercalculator", alg_params)
 
@@ -625,8 +640,8 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
         'RANGE_BOUNDARIES':0,
         'NODATA_FOR_MISSING':False,
         'DATA_TYPE':3,
-        'OUTPUT': workingpath + 'lc.tif'
-    }
+        'OUTPUT': workingpath + 'lc.tif'}
+
     outputs['LandCoverRaster'] = processing.run("native:reclassifybytable", alg_params)
 
     if waterpolygon == None:
@@ -705,8 +720,20 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
         if veg_exist == 1:
             if building_exist == 1:
                 print('Clipping out vegetation points with buffered buildings')
-                alg_params = 'C:/FUSION/PolyClipData64.exe /outside /class:1 "'  + outputs['BufferedBuildingsTif']['OUTPUT'] + '" "' + workingpath + 'vegbuff.las" "' + outputs['ClipLidardata']['OUTPUT'] + '"'
-                os.system(alg_params)
+                # alg_params = 'C:/FUSION/PolyClipData64.exe /outside /class:1 "'  + outputs['BufferedBuildingsTif']['OUTPUT'] + '" "' + workingpath + 'vegbuff.las" "' + outputs['ClipLidardata']['OUTPUT'] + '"'
+                # os.system(alg_params)
+
+                alg_params  = {
+                'INPUT': outputs['ClipLidardata']['OUTPUT'],
+                'MASK': outputs['BufferedBuildingsTif']['OUTPUT'],#buildingFootprint ,
+                'VERSION64':True,
+                'OUTPUT': workingpath + 'vegbuff.las',
+                'SHAPE':False,
+                'FIELD':'',
+                'VALUE':'',
+                'ADVANCED_MODIFIERS':'/outside /class:' + str(unclassified)}
+
+                processing.run("fusion:polyclipdata", alg_params)
 
                 alg_params = {
                     'INPUT':workingpath + 'vegbuff.las;' + workingpath + 'ground.las',
@@ -729,7 +756,7 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
                 'OUTPUT':workingpath + 'lai_grounddensity.dtm',
                 'FIRST':False,
                 'ASCII':True,
-                'CLASS':'2'
+                'CLASS': str(ground_class)
             }
             processing.run("fusion:returndensity", alg_params)
 
@@ -758,7 +785,19 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
             outputs['LAINodata'] = processing.run("gdal:rastercalculator", alg_params)
 
             alg_params = {
-                'INPUT':outputs['LAINodata']['OUTPUT'],
+                'INPUT_A':outputs['LAINodata']['OUTPUT'],
+                'BAND_A':1,
+                'INPUT_B':None,
+                'BAND_B':None,
+                'INPUT_C':None,'BAND_C':None,'INPUT_D':None,'BAND_D':None,'INPUT_E':None,'BAND_E':None,'INPUT_F':None,'BAND_F':None,
+                'FORMULA':'( A < 100 ) * A ',
+                'NO_DATA':None,'PROJWIN':None,'RTYPE':5,'OPTIONS':'','EXTRA':'',
+                'OUTPUT': workingpath + 'lai_10m_nodatainf.tif'
+            }
+            outputs['LAINodataInf'] = processing.run("gdal:rastercalculator", alg_params)
+
+            alg_params = {
+                'INPUT':outputs['LAINodataInf']['OUTPUT'],
                 'BAND':1,
                 'FILL_VALUE':0,
                 'OUTPUT': workingpath + 'lai_10m.tif'
@@ -774,6 +813,7 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
             shutil.copyfile(outputs['LAI']['OUTPUT'], outputfolder + 'lai_10m.tif')
         else:
             print('No vegetation in domain. No LAI created')
+
 
     # Assign CRS to Rasters
     alg_params = {'INPUT': workingpath + 'dem.tif', 'CRS':QgsCoordinateReferenceSystem.fromEpsgId(EPSGnum)}
@@ -803,20 +843,20 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path):
     # shutil.copyfile(workingpath + 'dsm.tif', outputfolder + 'dsm.tif')
     # shutil.copyfile(workingpath + 'cdsm.tif', outputfolder + 'cdsm.tif')
 
-    end = time.time()
-    total_time = end - start
-    print('Script finished in ' + str(round(total_time, 1)) + ' seconds' )
-    outputs = None
+    
 
 ##########################################################
 ###                 Loop Start                         ###
 ##########################################################
+
+start = time.time()
 
 # Create emppy lists to fill with rasternames used later to merge
 lc_list = []
 dem_list = []
 dsm_list = []
 cdsm_list = []
+lai_list = []
 
 if os.path.exists(mergeoutput):
     shutil.rmtree(mergeoutput)
@@ -824,28 +864,27 @@ if os.path.exists(mergeoutput):
 else:
     os.mkdir(outfolder + 'mergeoutput')
 
-# TODO Something is not working properly with deleting the building_clip.shp, thus using clipindex
 clipindex = 0
 
 for filename in lidar_list:
 
-    start = time.time()
-
-    lidardata = infolder + filename +'.las'
+    lidardata = infolder + lidar_folder + filename + '.las'
     outputfolder = infolder + filename + '/'
 
     lc_list.append(outputfolder + 'lc.tif')
     dem_list.append(outputfolder + 'dem.tif')
     dsm_list.append(outputfolder + 'dsm.tif')
     cdsm_list.append(outputfolder + 'cdsm.tif')
+    lai_list.append(outputfolder + 'lai_10m.tif')
 
     building_clip_path = workingpath + 'building_clip' + str(clipindex) + '.shp'
+    building_buff_path = workingpath + 'building_buff' + str(clipindex) + '.shp'
 
-    makedsmfromlidar(filename = filename, lidardata=lidardata, outputfolder= outputfolder,building_clip_path = building_clip_path)
+    makedsmfromlidar(filename=filename, lidardata=lidardata, outputfolder=outputfolder, building_clip_path=building_clip_path, building_buff_path=building_buff_path)
     clipindex = clipindex + 1
 
 print('Merge rasters from all used LiDAR-Squares in to one (1) .tif')
-for raster_list, raster_name in zip([lc_list, dem_list, dsm_list, cdsm_list], ['lc', 'dem', 'dsm', 'cdsm']):
+for raster_list, raster_name in zip([lc_list, dem_list, dsm_list, cdsm_list, lai_list], ['lc', 'dem', 'dsm', 'cdsm', 'lai']):
     
     alg_params = {
         'INPUT': raster_list,
@@ -859,3 +898,13 @@ for raster_list, raster_name in zip([lc_list, dem_list, dsm_list, cdsm_list], ['
         'OUTPUT': mergeoutput + raster_name + '_' + str(cellsize) + 'm.tif' }
 
     processing.run("gdal:merge", alg_params)
+
+end = time.time()
+total_time = end - start
+print('Script finished in ' + str(total_time / 60.) + ' minutes' )
+outputs = None
+
+app.exitQgis()
+if os.path.exists(workingpath):
+    shutil.rmtree(workingpath, ignore_errors= True) # ignore error cleans the folder except for 2 building_clip files.
+
