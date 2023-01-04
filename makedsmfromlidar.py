@@ -1,4 +1,4 @@
-
+# THIS FILE IS NOT UPDATED. USE THE LOOP FILE INSTEAD. 
 '''
 This script generates DSMs from Lidar data inconjunction to a building footprint vector layer.
 It also generates a LAI dataset

@@ -41,7 +41,8 @@ mergeoutput = outfolder + 'mergeoutput/'        # Outfolder for merged dsm, dem,
 workingpath = outfolder + 'tempdata/'           # Path to temp-folder DO NOT CHANGE
 lidar_folder = 'LaserData_NH/'                  # Set to '' if lidar files in infolder
 lidarExtension = '.laz'                         # or .las
-maxPoints = 50                                  # maximum number of pulses per square meter to include (if possible)
+updateLAS = 'yes'                               # Set to yes if maxPoints is changed
+maxPoints = 1.05                                  # maximum number of pulses per square meter to include (if possible)
 NH_lidar = 'yes'                                # yes if Nationell höjddata from Lantmäteriet is used
 
 # Set names for lidarfiles to use as list without .las. Set to None to automatically read file list
@@ -61,11 +62,11 @@ railway = None #infolder + 'rail.shp'            # if no railway polygon set to 
 #TODO: only build with no high veg is not tested proparly. Didnt fint a good testing area
 
 EPSGnum = 3006          # Target CRS. Make sure all data is in same CRS
-intensitylimit = 130    # to identify grass surfaces from Lidar. Values above will be classified as grass [0 to 255]
+intensitylimit = 115    # to identify grass surfaces from Lidar. Values above will be classified as grass [0 to 255]
 cellsize = 2            # Cellsize for output raster in meters
 buildingbuffer = 2.2    # Buffersize from building footprints in meters
 zfilter = 2.5           # min height above ground to filter out low vegetation (meter) 
-zlim = 25               # max height above ground to filer out (items such as bulding cranes and other stuff that may interfere) (meter) 
+zlim = 35               # max height above ground to filer out (items such as bulding cranes and other stuff that may interfere) (meter) 
 lowLimit = 0            # low relative limit for DSM (meter) 
 highLimit = 120         # high relative limit for DSM (meter)
 calculate_LAI = 'yes'   # Calculate LAI? yes or no
@@ -213,7 +214,7 @@ def overwrite_raster(input_raster, input_vector, value):
     return processing.run("gdal:rasterize_over_fixed_value", alg_params) 
 
 def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path, building_buff_path):    
-    print('\n*******************************\nWork with LASfile: ', filename, '\n*******************************')
+    print('\n*************************************\nProcessing LASfile: ', filename, '\n*************************************')
     
     outputs = {}
     ### Start of process ###
@@ -236,11 +237,12 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path, buil
 
     # converts laz ot las (if nececcary)
     if lidarExtension == '.laz':
-        if not os.path.exists(lidardata):
+        # if not os.path.exists(lidardata):
+        if updateLAS == 'yes':
             alg_params = {
             'INPUT':lidardata[:-4] + '.laz',
             'DENSITY':maxPoints,
-            'CELLSIZE':1,
+            'CELLSIZE':10,
             'RSEED':None,
             'CLASS':'',
             'IGNOREOVERLAP':False,
@@ -535,7 +537,7 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path, buil
                     y2[i, j] = 0 
 
         print('remove points higher than ' , zlim, 'm')
-        y2[np.where(y2 > 25)] = 0
+        y2[np.where(y2 > zlim)] = 0
 
         saveraster(data,workingpath + 'cdsm_temp.tif', y2)
 
@@ -883,19 +885,31 @@ for filename in lidar_list:
     makedsmfromlidar(filename=filename, lidardata=lidardata, outputfolder=outputfolder, building_clip_path=building_clip_path, building_buff_path=building_buff_path)
     clipindex = clipindex + 1
 
-print('Merge rasters from all used LiDAR-Squares in to one (1) .tif')
+print('Merge rasters from all used LiDAR-Squares in to one .tif')
 for raster_list, raster_name in zip([lc_list, dem_list, dsm_list, cdsm_list, lai_list], ['lc', 'dem', 'dsm', 'cdsm', 'lai']):
     
-    alg_params = {
-        'INPUT': raster_list,
-        'PCT':False,
-        'SEPARATE':False,
-        'NODATA_INPUT':None,
-        'NODATA_OUTPUT':None,
-        'OPTIONS':'',
-        'EXTRA':'',
-        'DATA_TYPE':5,
-        'OUTPUT': mergeoutput + raster_name + '_' + str(cellsize) + 'm.tif' }
+    if raster_name == 'cdsm': #TODO: remove possible stripe in merged cdsm (as gound is zero) using mosiac or something...
+        alg_params = {
+            'INPUT': raster_list,
+            'PCT':False,
+            'SEPARATE':False,
+            'NODATA_INPUT':None,
+            'NODATA_OUTPUT':None,
+            'OPTIONS':'',
+            'EXTRA':'',
+            'DATA_TYPE':5,
+            'OUTPUT': mergeoutput + raster_name + '.tif' }
+    else:
+        alg_params = {
+            'INPUT': raster_list,
+            'PCT':False,
+            'SEPARATE':False,
+            'NODATA_INPUT':0,
+            'NODATA_OUTPUT':None,
+            'OPTIONS':'',
+            'EXTRA':'',
+            'DATA_TYPE':5,
+            'OUTPUT': mergeoutput + raster_name + '.tif' }
 
     processing.run("gdal:merge", alg_params)
 
