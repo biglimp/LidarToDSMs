@@ -7,7 +7,8 @@ This code generates high resolution surface models and other data from a LiDAR p
 1. Lidar point cloud (currently NH - Nationell höjddatabas)
 2. Building vector foot print (polygon) in shapefile format
 3. Vector polygon representing domain (shapefile) [optional]
-4. Water (downloaded from Open Street Map - Quick OSM plugin required) [optional]
+4. Water, downloaded from Open Street Map - (Quick OSM plugin required) or as a polygon vector layer [optional]
+5. Elevated rail structures and bridges as polygon layers [optional]
 
 
 **Output data generated:**
