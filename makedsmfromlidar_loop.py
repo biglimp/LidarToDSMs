@@ -42,16 +42,10 @@ workingpath = outfolder + 'tempdata/'           # Path to temp-folder DO NOT CHA
 lidar_folder = 'LaserData_NH/'                  # Set to '' if lidar files in infolder
 lidarExtension = '.laz'                         # or .las
 updateLAS = 'yes'                               # Set to yes if maxPoints is changed
-maxPoints = 1.05                                  # maximum number of pulses per square meter to include (if possible)
+maxPoints = 0.95                                # maximum number of pulses per square meter to include (if possible)
 NH_lidar = 'yes'                                # yes if Nationell höjddata from Lantmäteriet is used
 
-# Set names for lidarfiles to use as list without .las. Set to None to automatically read file list
-lidar_list = None
-if lidar_list is None:
-    lidar_list = [] 
-    for file in os.listdir(infolder + lidar_folder):
-        if file.endswith(lidarExtension):
-            lidar_list.append(file[:-4])
+
 
 domain = None                                    # polygon to clip with. if using whole .las file, set this to None
 buildingFootprint = infolder + 'Fastighetskartan_Bebyggelse/by_03.shp'      # Buildings polygons 
@@ -70,6 +64,14 @@ zlim = 35               # max height above ground to filer out (items such as bu
 lowLimit = 0            # low relative limit for DSM (meter) 
 highLimit = 120         # high relative limit for DSM (meter)
 calculate_LAI = 'yes'   # Calculate LAI? yes or no
+
+# Set names for lidarfiles to use as list without .las. Set to None to automatically read file list
+lidar_list = None
+if lidar_list is None:
+    lidar_list = [] 
+    for file in os.listdir(infolder + lidar_folder):
+        if file.endswith(lidarExtension):
+            lidar_list.append(file[:-4])
 
 #TODO include classes from standard las-file. 
 if NH_lidar.lower() == 'yes':
@@ -704,27 +706,24 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path, buil
         # Remove veg inside water polygon for cdsm
         overwrite_raster(workingpath + 'cdsm.tif', waterpolygon, 0)
 
-        if bridges is not None:
-            # remove veg on bridges 
-            overwrite_raster(workingpath + 'cdsm.tif', bridges, 0)
-            # set areas of bridges to paved 1 in lc             
-            print('Burn 1 (paved) into LC where there are bridges') 
-            overwrite_raster(workingpath + 'lc.tif', bridges, 1)
+    if bridges is not None:
+        # remove veg on bridges 
+        overwrite_raster(workingpath + 'cdsm.tif', bridges, 0)
+        # set areas of bridges to paved 1 in lc             
+        print('Burn 1 (paved) into LC where there are bridges') 
+        overwrite_raster(workingpath + 'lc.tif', bridges, 1)
 
-        if railway is not None:
-            # remove veg on railway in cdsm
-            overwrite_raster(workingpath + 'cdsm.tif', railway, 0)
-            # set areas within railway to paved 1 in lc
-            overwrite_raster(workingpath + 'lc.tif', railway, 1)
+    if railway is not None:
+        # remove veg on railway in cdsm
+        overwrite_raster(workingpath + 'cdsm.tif', railway, 0)
+        # set areas within railway to paved 1 in lc
+        overwrite_raster(workingpath + 'lc.tif', railway, 1)
 
     if calculate_LAI.lower() == 'yes':
         print('LAI estimation from Lidar')
         if veg_exist == 1:
             if building_exist == 1:
                 print('Clipping out vegetation points with buffered buildings')
-                # alg_params = 'C:/FUSION/PolyClipData64.exe /outside /class:1 "'  + outputs['BufferedBuildingsTif']['OUTPUT'] + '" "' + workingpath + 'vegbuff.las" "' + outputs['ClipLidardata']['OUTPUT'] + '"'
-                # os.system(alg_params)
-
                 alg_params  = {
                 'INPUT': outputs['ClipLidardata']['OUTPUT'],
                 'MASK': outputs['BufferedBuildingsTif']['OUTPUT'],#buildingFootprint ,
@@ -894,24 +893,32 @@ for raster_list, raster_name in zip([lc_list, dem_list, dsm_list, cdsm_list, lai
             'PCT':False,
             'SEPARATE':False,
             'NODATA_INPUT':None,
-            'NODATA_OUTPUT':-9999,
+            'NODATA_OUTPUT':None,
             'OPTIONS':'',
             'EXTRA':'',
             'DATA_TYPE':5,
-            'OUTPUT': mergeoutput + raster_name + '.tif' }
+            'OUTPUT': mergeoutput + raster_name + 'temp.tif' }
     else:
         alg_params = {
             'INPUT': raster_list,
             'PCT':False,
             'SEPARATE':False,
             'NODATA_INPUT':0,
-            'NODATA_OUTPUT':-9999,
+            'NODATA_OUTPUT':None,
             'OPTIONS':'',
             'EXTRA':'',
             'DATA_TYPE':5,
-            'OUTPUT': mergeoutput + raster_name + '.tif' }
+            'OUTPUT': mergeoutput + raster_name + 'temp.tif' }
 
     processing.run("gdal:merge", alg_params)
+
+# set nodata to -9999
+for raster_name in ['lc', 'dem', 'dsm', 'cdsm', 'lai']:
+    data3 = gdal.Open(mergeoutput + raster_name + 'temp.tif', GA_ReadOnly)
+    raster = data3.ReadAsArray().astype(float)
+    saveraster(data3, mergeoutput + raster_name + '.tif', raster)
+    data3 = None
+    os.remove(mergeoutput + raster_name + 'temp.tif')
 
 end = time.time()
 total_time = end - start
