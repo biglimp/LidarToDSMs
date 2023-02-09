@@ -598,7 +598,7 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path, buil
     outputs['IntensityWarp'] = processing.run("gdal:warpreproject", alg_params)
     
     shutil.copyfile(outputs['IntensityWarp']['OUTPUT'], outputfolder + 'intensity.tif')
-    outputs['Intensity1RasterNodata'] = rastercalculator(workingpath + 'intensity1nodata.tif',None ,'(A < 255) * A', outputs['IntensityWarp']['OUTPUT'])
+    outputs['Intensity1RasterNodata'] = rastercalculator(workingpath + 'intensity1nodata.tif',None ,'(A <= 255) * A', outputs['IntensityWarp']['OUTPUT'])
     outputs['Intensity1RasterFinal'] = rastercalculator(workingpath + 'lc_bolean.tif', None ,'(A >= ' + str(intensitylimit) + ')', outputs['Intensity1RasterNodata']['OUTPUT'])
 
     print('extracting grass raster')
@@ -894,7 +894,20 @@ for filename in lidar_list:
     clipindex = clipindex + 1
 
 print('Merge rasters from all used LiDAR-Squares in to one .tif')
-for raster_list, raster_name in zip([lc_list, dem_list, dsm_list, cdsm_list, lai_list], ['lc', 'dem', 'dsm', 'cdsm', 'lai']):
+if calculate_LAI == 'no': 
+    gridstoprocess=['lc', 'dem', 'dsm', 'cdsm']
+    gridslist=[lc_list, dem_list, dsm_list, cdsm_list]
+else: 
+    gridstoprocess=['lc', 'dem', 'dsm', 'cdsm', 'lai']
+    gridslist=[lc_list, dem_list, dsm_list, cdsm_list, lai_list]
+
+for raster_list, raster_name in zip(gridslist, gridstoprocess):
+
+    with open('c:/temp/' + raster_name + '_list.txt','w') as f:
+        for word in raster_list:
+            f.write(word)
+            f.write('\n')
+    f.close()
     
     if raster_name == 'cdsm': #TODO: remove possible stripe in merged cdsm (as gound is zero) using mosiac or something...
         alg_params = {
@@ -922,7 +935,7 @@ for raster_list, raster_name in zip([lc_list, dem_list, dsm_list, cdsm_list, lai
     processing.run("gdal:merge", alg_params)
 
 # set nodata to -9999
-for raster_name in ['lc', 'dem', 'dsm', 'cdsm', 'lai']:
+for raster_name in gridstoprocess:
     data3 = gdal.Open(mergeoutput + raster_name + 'temp.tif', GA_ReadOnly)
     raster = data3.ReadAsArray().astype(float)
     saveraster(data3, mergeoutput + raster_name + '.tif', raster)
@@ -938,4 +951,3 @@ outputs = None
 app.exitQgis()
 if os.path.exists(workingpath):
     shutil.rmtree(workingpath, ignore_errors= True) # ignore error cleans the folder except for 2 building_clip files.
-
