@@ -35,14 +35,14 @@ warnings.filterwarnings("ignore")
 
 ### Input data paths and settings ###
 windowsuser = 'xlinfr'                          # set username
-infolder = 'C:/temp/Sandra/'        # inputfolder for all input data
-outfolder = 'C:/temp/Sandra/out/'              # outputfolder
+infolder = 'C:/temp/Sandra/'                    # inputfolder for all input data
+outfolder = 'C:/temp/Sandra/out/'               # outputfolder
 mergeoutput = outfolder + 'mergeoutput/'        # Outfolder for merged dsm, dem, cdsm & lc
 workingpath = outfolder + 'tempdata/'           # Path to temp-folder DO NOT CHANGE
-lidar_folder = 'Skogsdata/'                  # Set to '' if lidar files in infolder
+lidar_folder = 'Skogsdata/'                     # Set to '' if lidar files in infolder
 lidarExtension = '.laz'                         # or .las
-updateLAS = 'no'                               # Set to yes if maxPoints is changed
-maxPoints = 2                               # maximum number of pulses per square meter to include (if possible)
+updateLAS = 'yes'                               # Set to yes if maxPoints is changed AND if you run the script for the first time using .laz-files
+maxPoints = 10                                  # maximum number of pulses per square meter to include (if possible)
 NH_lidar = 'yes'                                # yes if Nationell höjddata from Lantmäteriet is used
 
 domain = None                                    # polygon to clip with. if using whole .las file(s), set this to None

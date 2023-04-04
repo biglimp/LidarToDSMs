@@ -19,3 +19,7 @@ This code generates high resolution surface models and other data from a LiDAR p
 5. LAI (Leaf Area Index) [optional]
 
 Main file: makedsmfromlidar_loop.py
+
+**Remarks**
+1. If you have .laz-files you need to make sure that FUSION can read .laz-files. Go to the FUSION-manual to see how.
+2. If you have .laz-files, you need to set the parameter updateLAS to 'yes' the first time you run the code. This will unpack your .laz-files to .las.
