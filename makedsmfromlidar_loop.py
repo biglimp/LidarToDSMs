@@ -47,7 +47,7 @@ NH_lidar = 'yes'                                # yes if Nationell höjddata fro
 
 domain = None                                    # polygon to clip with. if using whole .las file(s), set this to None
 buildingFootprint = infolder + 'by_gbg.shp'      # Buildings polygons 
-waterpolygon = infolder + 'vattenGöteborg.shp'    # if no water polygon Set to None. Then OSMdata will be used TODO: water.gpdb from osm is not deleted
+waterpolygon = infolder + 'vattenGöteborg.shp'   # if no water polygon Set to None. Then OSMdata will be used TODO: water.gpdb from osm is not deleted
 bridges = None #infolder + 'bridges_poly.shp'    # if no bridges polygon set to None
 railway = None #infolder + 'rail.shp'            # if no railway polygon set to None
 
@@ -61,7 +61,8 @@ zfilter = 2.5           # min height above ground to filter out low vegetation (
 zlim = 35               # max height above ground to filer out (items such as bulding cranes and other stuff that may interfere) (meter) 
 lowLimit = 0            # low relative limit for DSM (meter) 
 highLimit = 120         # high relative limit for DSM (meter)
-calculate_LAI = 'no'   # Calculate LAI? yes or no
+calculate_LAI = 'no'    # Calculate LAI? yes or no
+DsmDemForBFrac = 'yes'  # Use Lidardata to derive building fraction instead of building footprints. Makes consistent with SUEWS pydantic
 
 # Set names for lidarfiles to use as list without .las. Set to None to automatically read file list
 lidar_list = None
@@ -90,7 +91,7 @@ app = QgsApplication([], False)
 app.initQgis()
 
 sys.path.append('C:/OSGeo4W/apps/qgis/python/plugins')
-sys.path.append('C:/Users/' + windowsuser + '/AppData/Roaming/QGIS/QGIS3/profiles/default/python/plugins') # path to third party plugins
+sys.path.append('C:/Users/' + windowsuser + '/AppData/Roaming/QGIS/QGIS4/profiles/default/python/plugins') # path to third party plugins
 sys.path.append('C:/FUSION')
 
 import processing
@@ -555,7 +556,13 @@ def makedsmfromlidar(filename, lidardata, outputfolder, building_clip_path, buil
 
     # land cover
     print('Making landcover from lidar')
-    outputs['BuildingsBoolean'] = gdal_rasterize(buildingFootprint, workingpath + 'build_bolean.tif', projwin)
+    if DsmDemForBFrac == 'yes': # added 20260629 to cope with pydantic rules in SUEWS (diff in buildfrac between lc and dsm-dem)
+        datadem = gdal.Open(workingpath + 'dem.tif', GA_ReadOnly)
+        dem = datadem.ReadAsArray().astype(float)
+        build_bol = (dsm - dem) > 2.0
+        saveraster(datadem, workingpath + 'build_bolean.tif', build_bol)
+    else:
+        outputs['BuildingsBoolean'] = gdal_rasterize(buildingFootprint, workingpath + 'build_bolean.tif', projwin)
 
     if veg_exist == 1:
         # If there is no high vegetation, this will not work. Therefore try: statement
